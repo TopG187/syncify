@@ -14,6 +14,8 @@ let inputBridge = null;
 let controllingRemote = false;
 let beingControlled = false;
 let sessionStore = null;
+/** TEMP: mouse/keyboard sharing disabled — was causing cursor feedback loops on both machines */
+let mouseShareEnabled = false;
 
 const DEFAULT_PORT = 24892;
 
@@ -159,13 +161,25 @@ function setupHubHandlers() {
       status.state === 'connected' ||
       status.state === 'reconnecting'
     ) {
-      if (!controllingRemote && !beingControlled) inputBridge.startEdgeWatch();
-      else inputBridge.stopEdgeWatch();
+      if (mouseShareEnabled && !controllingRemote && !beingControlled) {
+        inputBridge.startEdgeWatch();
+      } else {
+        inputBridge.stopEdgeWatch();
+      }
     }
   });
   hub.on('log', (msg) => sendToUI('log', msg));
 
   hub.on('being-controlled', async (on) => {
+    if (!mouseShareEnabled) {
+      // Reject takeover while mouse share is off
+      beingControlled = false;
+      hub.beingControlled = false;
+      hub.send({ type: 'release' });
+      await inputBridge.stopGuard();
+      inputBridge.stopEdgeWatch();
+      return;
+    }
     beingControlled = !!on;
     updateTrayMenu();
     if (beingControlled) {
@@ -177,12 +191,16 @@ function setupHubHandlers() {
       await inputBridge.startGuard();
     } else {
       await inputBridge.stopGuard();
-      if (!controllingRemote) inputBridge.startEdgeWatch();
+      if (!controllingRemote && mouseShareEnabled) inputBridge.startEdgeWatch();
     }
     sendToUI('control', { remote: controllingRemote, beingControlled });
   });
 
   hub.on('control-enter', async () => {
+    if (!mouseShareEnabled) {
+      await forceLocalControl('Mouse share is disabled');
+      return;
+    }
     controllingRemote = true;
     beingControlled = false;
     updateTrayMenu();
@@ -200,16 +218,16 @@ function setupHubHandlers() {
     await inputBridge.stopCapturing();
     await inputBridge.nudgeInward(hub.getLayout());
     clipboardSync.flush();
-    if (!beingControlled) inputBridge.startEdgeWatch();
+    if (mouseShareEnabled && !beingControlled) inputBridge.startEdgeWatch();
   });
 
   hub.on('remote-input', (msg) => {
+    if (!mouseShareEnabled) return;
     if (msg?.t === 'hotkey-release') {
       forceLocalControl('Peer released');
       return;
     }
     if (controllingRemote) return;
-    // Only inject while this machine is marked as being controlled
     if (!beingControlled) return;
     inputBridge.applyRemote(msg);
   });
@@ -243,7 +261,8 @@ async function forceLocalControl(reason) {
   updateTrayMenu();
   sendToUI('control', { remote: false, beingControlled: false });
   sendToUI('log', reason || 'Local control restored');
-  inputBridge.startEdgeWatch();
+  if (mouseShareEnabled) inputBridge.startEdgeWatch();
+  else inputBridge.stopEdgeWatch();
 }
 
 function listDisplays() {
@@ -324,7 +343,10 @@ app.whenReady().then(async () => {
       }
       hub.sendInput(msg);
     },
-    onEdgeLeave: (hit) => hub.tryLeaveViaEdge(hit),
+    onEdgeLeave: (hit) => {
+      if (!mouseShareEnabled) return false;
+      return hub.tryLeaveViaEdge(hit);
+    },
     onLocalReclaim: () => forceLocalControl('Local mouse reclaimed control'),
     isControllingRemote: () => controllingRemote,
     isBeingControlled: () => beingControlled,
@@ -336,6 +358,9 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   clipboardSync.start();
+
+  // Mouse share off by default — kill any leftover capture immediately
+  forceLocalControl('Mouse share disabled (clipboard still works)');
 
   // Panic hotkeys — work even while cursor is being dragged by peer
   const panic = () => forceLocalControl('Panic hotkey — local control');
@@ -357,6 +382,7 @@ app.whenReady().then(async () => {
       session: hub.getSession() || saved,
       inputReady: inputBridge.available,
       inputError: inputBridge.loadError ? String(inputBridge.loadError.message || inputBridge.loadError) : null,
+      mouseShareEnabled,
     };
   });
 
