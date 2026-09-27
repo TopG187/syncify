@@ -378,6 +378,21 @@ app.whenReady().then(async () => {
           clipboard.writeText(value);
         }
       }
+      // OS-native fallback (helps macOS pasteboard reliability)
+      try {
+        const { execFileSync } = require('child_process');
+        if (process.platform === 'darwin') {
+          execFileSync('pbcopy', { input: value, encoding: 'utf8' });
+        } else if (process.platform === 'win32') {
+          execFileSync(
+            'powershell.exe',
+            ['-NoProfile', '-Command', 'Set-Clipboard -Value $input'],
+            { input: value, encoding: 'utf8', windowsHide: true }
+          );
+        }
+      } catch {
+        /* ignore native fallback errors */
+      }
     },
     onLocalChange: (text) => {
       if (!hub || !hub.socket) return;
@@ -409,6 +424,13 @@ app.whenReady().then(async () => {
       return hub.tryLeaveViaEdge(hit);
     },
     onLocalReclaim: () => forceLocalControl('Local mouse reclaimed control'),
+    onClipboardHint: (kind) => {
+      // Push clipboard before remote sees Copy/Paste keys
+      clipboardSync.flush(true);
+      if (kind === 'copy') {
+        setTimeout(() => clipboardSync.notifyCopy(), 100);
+      }
+    },
     isControllingRemote: () => controllingRemote,
     isBeingControlled: () => beingControlled,
     getPeerScreen: () => hub.getPeerScreen(),
