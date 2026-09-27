@@ -28,6 +28,12 @@
     $('btnJoin').disabled = on;
   }
 
+  function selectTab(whichtab) {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === whichtab));
+    $('panel-host').classList.toggle('hidden', whichtab !== 'host');
+    $('panel-join').classList.toggle('hidden', whichtab !== 'join');
+  }
+
   function applyTheme(theme) {
     const next = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
@@ -119,13 +125,7 @@
   });
 
   document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
-      tab.classList.add('active');
-      const isHost = tab.dataset.tab === 'host';
-      $('panel-host').classList.toggle('hidden', !isHost);
-      $('panel-join').classList.toggle('hidden', isHost);
-    });
+    tab.addEventListener('click', () => selectTab(tab.dataset.tab));
   });
 
   $('btnTheme').addEventListener('click', () => {
@@ -156,7 +156,7 @@
       return;
     }
     setConnectedUI(true);
-    setStatus(`Connected to ${host}`, 'on');
+    setStatus(res.reconnecting ? `Reconnecting to ${host}…` : `Connected to ${host}`, res.reconnecting ? 'host' : 'on');
   });
 
   $('btnDisconnect').addEventListener('click', async () => {
@@ -165,14 +165,25 @@
     $('btnRelease').classList.add('hidden');
     setStatus('Idle');
     $('peerMeta').textContent = 'No peer connected';
-    addLog('Disconnected');
+    addLog('Disconnected — auto-reconnect off');
   });
 
   $('btnRelease').addEventListener('click', () => window.syncify.releaseControl());
 
   window.syncify.onStatus((s) => {
-    if (s.state === 'hosting') setStatus(`Hosting on ${s.port || '…'}`, 'host');
-    if (s.state === 'connected') setStatus('Connected', 'on');
+    if (s.state === 'hosting') {
+      setStatus(s.waiting ? `Hosting — waiting for peer` : `Hosting on ${s.port || '…'}`, 'host');
+      setConnectedUI(true);
+    }
+    if (s.state === 'connected') {
+      setStatus('Connected', 'on');
+      setConnectedUI(true);
+    }
+    if (s.state === 'reconnecting') {
+      setStatus(`Reconnecting${s.host ? ` to ${s.host}` : ''}…`, 'host');
+      setConnectedUI(true);
+      selectTab('join');
+    }
     if (s.state === 'paired') {
       setStatus(s.beingControlled ? 'Being controlled' : 'Paired', s.beingControlled ? 'remote' : 'on');
       setConnectedUI(true);
@@ -212,12 +223,25 @@
     $('hostMeta').textContent = `${info.hostname} · ${info.platform} · ${info.screen.width}×${info.screen.height}`;
 
     displays = info.displays || [];
-    // Prefer leftmost for “Mac below left” setups
     const leftmost = [...displays].sort((a, b) => a.bounds.x - b.bounds.x)[0];
+    const savedLayout = (info.session && info.session.layout) || info.layout;
     layout = {
-      edge: (info.layout && info.layout.edge) || 'bottom',
-      displayId: (info.layout && info.layout.displayId) || (leftmost && leftmost.id) || null,
+      edge: (savedLayout && savedLayout.edge) || 'bottom',
+      displayId: (savedLayout && savedLayout.displayId) || (leftmost && leftmost.id) || null,
     };
+
+    if (info.session && info.session.enabled) {
+      if (info.session.port) {
+        $('hostPort').value = info.session.port;
+        $('joinPort').value = info.session.port;
+      }
+      if (info.session.host) $('joinHost').value = info.session.host;
+      selectTab(info.session.role === 'client' ? 'join' : 'host');
+      setConnectedUI(true);
+      setStatus(info.session.role === 'host' ? 'Restoring host…' : 'Reconnecting…', 'host');
+      addLog('Auto-reconnect is on — stays linked until you Disconnect');
+    }
+
     syncEdgeButtons();
     renderMonitorMap();
     persistLayout();

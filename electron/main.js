@@ -4,6 +4,7 @@ const os = require('os');
 const { PeerHub } = require('../lib/peer-hub');
 const { ClipboardSync } = require('../lib/clipboard-sync');
 const { InputBridge } = require('../lib/input-bridge');
+const { SessionStore } = require('../lib/session-store');
 
 let mainWindow = null;
 let tray = null;
@@ -11,6 +12,7 @@ let hub = null;
 let clipboardSync = null;
 let inputBridge = null;
 let controllingRemote = false;
+let sessionStore = null;
 
 const DEFAULT_PORT = 24892;
 
@@ -113,7 +115,12 @@ function getLocalAddresses() {
 function setupHubHandlers() {
   hub.on('status', (status) => {
     sendToUI('status', status);
-    if (status.state === 'paired' || status.state === 'hosting' || status.state === 'connected') {
+    if (
+      status.state === 'paired' ||
+      status.state === 'hosting' ||
+      status.state === 'connected' ||
+      status.state === 'reconnecting'
+    ) {
       if (!controllingRemote) inputBridge.startEdgeWatch();
     }
     if (status.state === 'idle') inputBridge.stopEdgeWatch();
@@ -175,11 +182,12 @@ function listDisplays() {
   return sorted;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Leaner footprint
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
-  hub = new PeerHub({ defaultPort: DEFAULT_PORT });
+  sessionStore = new SessionStore(path.join(app.getPath('userData'), 'session.json'));
+  hub = new PeerHub({ defaultPort: DEFAULT_PORT, sessionStore });
   clipboardSync = new ClipboardSync({
     getText: () => clipboard.readText(),
     setText: (t) => clipboard.writeText(t),
@@ -213,6 +221,7 @@ app.whenReady().then(() => {
   ipcMain.handle('get-info', () => {
     const displays = listDisplays();
     const primary = screen.getPrimaryDisplay();
+    const saved = sessionStore.load();
     return {
       hostname: os.hostname(),
       platform: process.platform,
@@ -221,6 +230,7 @@ app.whenReady().then(() => {
       screen: primary.size,
       displays,
       layout: hub.getLayout(),
+      session: hub.getSession() || saved,
       inputReady: inputBridge.available,
       inputError: inputBridge.loadError ? String(inputBridge.loadError.message || inputBridge.loadError) : null,
     };
@@ -238,8 +248,12 @@ app.whenReady().then(() => {
   ipcMain.handle('connect', async (_e, { host, port, layout }) => {
     try {
       await hub.connect(String(host).trim(), Number(port) || DEFAULT_PORT, layout);
-      return { ok: true };
+      const reconnecting = hub.role === 'client' && !hub.socket;
+      return { ok: true, reconnecting };
     } catch (err) {
+      if (hub.wantedActive && hub.role === 'client') {
+        return { ok: true, reconnecting: true };
+      }
       return { ok: false, error: err.message };
     }
   });
@@ -262,6 +276,11 @@ app.whenReady().then(() => {
     await hub.releaseControl();
     return { ok: true };
   });
+
+  // Resume last link after launch (sleep / reboot / quit)
+  setTimeout(() => {
+    hub.restoreSession().catch((err) => console.error('restoreSession', err));
+  }, 600);
 });
 
 app.on('before-quit', async () => {
@@ -270,7 +289,8 @@ app.on('before-quit', async () => {
   clipboardSync?.stop();
   inputBridge?.stopEdgeWatch();
   await inputBridge?.stopCapturing();
-  await hub?.disconnect();
+  // Keep session file so next start auto-reconnects
+  await hub?.shutdown();
 });
 
 app.on('window-all-closed', (e) => {

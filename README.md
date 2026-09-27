@@ -10,6 +10,7 @@ Designed to stay small: one compact window, tray background, no cloud, LAN only.
 - **Clipboard sync** — text copied on one computer is available on the other
 - **Return hotkey** — `Ctrl+Alt+Backspace` (Mac: `Control+Option+Backspace`) brings control back
 - **Host or Join** — one machine hosts, the other connects by IP
+- **Auto-reconnect** — stays linked after sleep/reboot until you hit Disconnect
 
 ## Install (both computers)
 
@@ -33,6 +34,8 @@ Copy this whole folder to the other computer (or clone the same project) and run
 3. Allow port **24892** through the firewall when Windows/macOS asks (or add a rule).
 4. On computer **B**, pick its exit monitor/edge (usually the opposite side) → **Join** → enter A’s IP → Connect.
 5. Drag the mouse off the configured edge to control the other machine. Press `Ctrl+Alt+Backspace` to return.
+
+Once linked, Syncify **keeps reconnecting automatically** if a machine sleeps, reboots, or drops off Wi‑Fi. Only **Disconnect** in the app turns that off.
 
 ### Multi-monitor example (your setup)
 
