@@ -277,6 +277,11 @@ async function forceLocalControl(reason) {
   inputBridge.blockRemote(5000);
   await inputBridge.stopCapturing();
   await inputBridge.stopGuard();
+  try {
+    require('../lib/cursor-hide').forceShowCursor();
+  } catch {
+    /* ignore */
+  }
   if (controllingRemote) {
     controllingRemote = false;
     try {
