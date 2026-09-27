@@ -16,7 +16,37 @@ let sessionStore = null;
 
 const DEFAULT_PORT = 24892;
 
+function appIcon() {
+  const ico = path.join(__dirname, '..', 'assets', 'icon.ico');
+  const png = path.join(__dirname, '..', 'assets', 'icon-256.png');
+  const fallback = path.join(__dirname, '..', 'assets', 'icon.png');
+  for (const p of [ico, png, fallback]) {
+    try {
+      const img = nativeImage.createFromPath(p);
+      if (!img.isEmpty()) return img;
+    } catch {
+      /* try next */
+    }
+  }
+  return nativeImage.createEmpty();
+}
+
+function trayIcon() {
+  const tray = path.join(__dirname, '..', 'assets', 'tray.png');
+  const png = path.join(__dirname, '..', 'assets', 'icon-256.png');
+  for (const p of [tray, png]) {
+    try {
+      const img = nativeImage.createFromPath(p);
+      if (!img.isEmpty()) return img;
+    } catch {
+      /* try next */
+    }
+  }
+  return appIcon();
+}
+
 function createWindow() {
+  const icon = appIcon();
   mainWindow = new BrowserWindow({
     width: 440,
     height: 680,
@@ -24,6 +54,7 @@ function createWindow() {
     minHeight: 560,
     title: 'Syncify',
     backgroundColor: '#12161a',
+    icon,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -45,14 +76,7 @@ function createWindow() {
 }
 
 function createTray() {
-  // 16x16 simple template-ish PNG as data URL → nativeImage
-  const png = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKUlEQVQ4T2NkYGD4z0ABYBzVMKoBBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY',
-    'base64'
-  );
-  let icon = nativeImage.createFromBuffer(png);
-  if (icon.isEmpty()) icon = nativeImage.createEmpty();
-  tray = new Tray(icon);
+  tray = new Tray(trayIcon());
   tray.setToolTip('Syncify');
   tray.on('click', () => {
     mainWindow?.show();
@@ -125,13 +149,13 @@ function setupHubHandlers() {
     }
     if (status.state === 'idle') inputBridge.stopEdgeWatch();
   });
-  hub.on('peer', (info) => sendToUI('peer', info));
   hub.on('log', (msg) => sendToUI('log', msg));
 
   hub.on('control-enter', async () => {
     controllingRemote = true;
     updateTrayMenu();
     sendToUI('control', { remote: true });
+    clipboardSync.flush();
     await inputBridge.startCapturing();
   });
 
@@ -141,6 +165,7 @@ function setupHubHandlers() {
     sendToUI('control', { remote: false });
     await inputBridge.stopCapturing();
     await inputBridge.nudgeInward(hub.getLayout());
+    clipboardSync.flush();
   });
 
   hub.on('remote-input', (msg) => {
@@ -153,6 +178,12 @@ function setupHubHandlers() {
 
   hub.on('clipboard', (text) => {
     clipboardSync.applyRemote(text);
+    if (text) sendToUI('log', 'Clipboard synced ← peer');
+  });
+
+  hub.on('peer', (info) => {
+    sendToUI('peer', info);
+    if (info) setTimeout(() => clipboardSync.flush(), 150);
   });
 }
 
@@ -189,9 +220,40 @@ app.whenReady().then(async () => {
   sessionStore = new SessionStore(path.join(app.getPath('userData'), 'session.json'));
   hub = new PeerHub({ defaultPort: DEFAULT_PORT, sessionStore });
   clipboardSync = new ClipboardSync({
-    getText: () => clipboard.readText(),
-    setText: (t) => clipboard.writeText(t),
-    onLocalChange: (text) => hub.sendClipboard(text),
+    getText: () => {
+      try {
+        return clipboard.readText('clipboard') || '';
+      } catch {
+        return clipboard.readText() || '';
+      }
+    },
+    setText: (t) => {
+      const value = t == null ? '' : String(t);
+      try {
+        clipboard.clear('clipboard');
+      } catch {
+        try {
+          clipboard.clear();
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        clipboard.writeText(value, 'clipboard');
+      } catch {
+        clipboard.writeText(value);
+      }
+      // Also write via write() for better macOS pasteboard compatibility
+      try {
+        clipboard.write({ text: value });
+      } catch {
+        /* ignore */
+      }
+    },
+    onLocalChange: (text) => {
+      const ok = hub.sendClipboard(text);
+      if (ok && text) sendToUI('log', 'Clipboard synced → peer');
+    },
   });
   inputBridge = new InputBridge({
     getDisplays: () => screen.getAllDisplays(),
