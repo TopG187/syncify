@@ -50,6 +50,18 @@ Only the bottom of the left PC monitor switches to the Mac — the middle monito
 
 Dark mode is the default. Use the sun/moon button next to the Syncify title to switch light ↔ dark (choice is remembered).
 
+## Build installers
+
+```bash
+# Windows (on a PC) — creates installer + portable exe in dist/
+npm run dist:win
+
+# macOS (on a Mac) — creates Syncify.dmg in dist/
+npm run dist:mac
+```
+
+Icons live in `build/icon.ico` (Windows), `build/icon.png` (Mac), and `assets/`.
+
 ### Example (single screens)
 
 ```

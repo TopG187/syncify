@@ -8,7 +8,10 @@
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w uiohook-napi,@nut-tree-fork/nut-js",
-    "postinstall": "electron-rebuild -f -w uiohook-napi,@nut-tree-fork/nut-js || echo Rebuild skipped — run npm run rebuild after install"
+    "postinstall": "electron-rebuild -f -w uiohook-napi,@nut-tree-fork/nut-js || echo Rebuild skipped — run npm run rebuild after install",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
@@ -18,6 +21,60 @@
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
     "electron": "^33.2.0",
-    "electron-rebuild": "^3.2.9"
+    "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.33.5"
+  },
+  "build": {
+    "appId": "com.syncify.app",
+    "productName": "Syncify",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "lib/**/*",
+      "ui/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Syncify"
+    },
+    "dmg": {
+      "title": "Syncify"
+    }
   }
 }
