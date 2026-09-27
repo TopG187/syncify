@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const { PeerHub } = require('../lib/peer-hub');
 const { ClipboardSync } = require('../lib/clipboard-sync');
+const { CopyWatcher } = require('../lib/copy-watcher');
 const { InputBridge } = require('../lib/input-bridge');
 const { SessionStore } = require('../lib/session-store');
 const { SettingsStore } = require('../lib/settings-store');
@@ -11,6 +12,7 @@ let mainWindow = null;
 let tray = null;
 let hub = null;
 let clipboardSync = null;
+let copyWatcher = null;
 let inputBridge = null;
 let controllingRemote = false;
 let beingControlled = false;
@@ -245,7 +247,7 @@ function setupHubHandlers() {
     sendToUI('control', { remote: false, beingControlled });
     await inputBridge.stopCapturing();
     await inputBridge.nudgeInward(hub.getLayout());
-    clipboardSync.flush();
+    clipboardSync.flush(true);
     syncEdgeWatch();
   });
 
@@ -262,12 +264,15 @@ function setupHubHandlers() {
 
   hub.on('clipboard', (text) => {
     clipboardSync.applyRemote(text);
-    if (text) sendToUI('log', 'Clipboard synced ← peer');
+    sendToUI('log', text ? `Clipboard synced ← peer (${text.length} chars)` : 'Clipboard cleared ← peer');
   });
 
   hub.on('peer', (info) => {
     sendToUI('peer', info);
-    if (info) setTimeout(() => clipboardSync.flush(), 150);
+    if (info) {
+      setTimeout(() => clipboardSync.flush(true), 200);
+      setTimeout(() => clipboardSync.flush(true), 800);
+    }
   });
 }
 
@@ -345,37 +350,48 @@ app.whenReady().then(async () => {
   clipboardSync = new ClipboardSync({
     getText: () => {
       try {
-        return clipboard.readText('clipboard') || '';
+        // Prefer plain text; fall back to HTML stripped lightly if needed
+        const plain = clipboard.readText('clipboard') || clipboard.readText() || '';
+        if (plain) return plain;
+        const html = clipboard.readHTML('clipboard') || clipboard.readHTML() || '';
+        if (html) {
+          return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+        return '';
       } catch {
-        return clipboard.readText() || '';
+        try {
+          return clipboard.readText() || '';
+        } catch {
+          return '';
+        }
       }
     },
     setText: (t) => {
       const value = t == null ? '' : String(t);
-      try {
-        clipboard.clear('clipboard');
-      } catch {
-        try {
-          clipboard.clear();
-        } catch {
-          /* ignore */
-        }
-      }
-      try {
-        clipboard.writeText(value, 'clipboard');
-      } catch {
-        clipboard.writeText(value);
-      }
+      // Do NOT clear first — that briefly syncs empty clipboard to the peer
       try {
         clipboard.write({ text: value });
       } catch {
-        /* ignore */
+        try {
+          clipboard.writeText(value, 'clipboard');
+        } catch {
+          clipboard.writeText(value);
+        }
       }
     },
     onLocalChange: (text) => {
+      if (!hub || !hub.socket) return;
       const ok = hub.sendClipboard(text);
-      if (ok && text) sendToUI('log', 'Clipboard synced → peer');
+      if (ok) {
+        sendToUI(
+          'log',
+          text ? `Clipboard synced → peer (${text.length} chars)` : 'Clipboard cleared → peer'
+        );
+      }
     },
+  });
+  copyWatcher = new CopyWatcher({
+    onCopy: () => clipboardSync.notifyCopy(),
   });
   inputBridge = new InputBridge({
     getDisplays: () => screen.getAllDisplays(),
@@ -403,6 +419,7 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   clipboardSync.start();
+  copyWatcher.start();
 
   // Clear any stuck capture from a previous crash
   await inputBridge.stopCapturing();
@@ -485,6 +502,7 @@ app.on('before-quit', async () => {
   app.isQuitting = true;
   globalShortcut.unregisterAll();
   clipboardSync?.stop();
+  copyWatcher?.stop();
   inputBridge?.stopEdgeWatch();
   await inputBridge?.stopCapturing();
   await inputBridge?.stopGuard();
