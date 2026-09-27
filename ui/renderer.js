@@ -206,8 +206,9 @@
   window.syncify.onLog(addLog);
 
   window.syncify.onControl((c) => {
-    $('btnRelease').classList.toggle('hidden', !c.remote);
+    $('btnRelease').classList.toggle('hidden', !(c.remote || c.beingControlled));
     if (c.remote) setStatus('Controlling remote', 'remote');
+    else if (c.beingControlled) setStatus('Being controlled', 'remote');
     else setStatus('Paired', 'on');
   });
 

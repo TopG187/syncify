@@ -91,7 +91,11 @@ function updateTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: controllingRemote ? 'Controlling remote…' : 'Local control',
+        label: controllingRemote
+          ? 'Controlling remote…'
+          : beingControlled
+            ? 'Being controlled…'
+            : 'Local control',
         enabled: false,
       },
       { type: 'separator' },
@@ -103,9 +107,13 @@ function updateTrayMenu() {
         },
       },
       {
+        label: 'Stop remote mouse (fix me)',
+        click: () => forceLocalControl('Stopped from tray'),
+      },
+      {
         label: 'Return control',
-        enabled: controllingRemote,
-        click: () => hub?.releaseControl(),
+        enabled: controllingRemote || beingControlled,
+        click: () => forceLocalControl('Control released'),
       },
       {
         label: 'Quit',
@@ -142,6 +150,7 @@ function setupHubHandlers() {
     sendToUI('status', status);
     if (status.state === 'idle') {
       inputBridge.stopEdgeWatch();
+      inputBridge.stopGuard();
       return;
     }
     if (
@@ -150,24 +159,25 @@ function setupHubHandlers() {
       status.state === 'connected' ||
       status.state === 'reconnecting'
     ) {
-      // Never edge-watch while driving peer OR while peer drives us
       if (!controllingRemote && !beingControlled) inputBridge.startEdgeWatch();
       else inputBridge.stopEdgeWatch();
     }
   });
   hub.on('log', (msg) => sendToUI('log', msg));
 
-  hub.on('being-controlled', (on) => {
+  hub.on('being-controlled', async (on) => {
     beingControlled = !!on;
+    updateTrayMenu();
     if (beingControlled) {
       inputBridge.stopEdgeWatch();
-      // If we somehow were capturing, stop — peer owns the cursor now
       if (controllingRemote) {
         controllingRemote = false;
-        inputBridge.stopCapturing();
+        await inputBridge.stopCapturing();
       }
-    } else if (!controllingRemote) {
-      inputBridge.startEdgeWatch();
+      await inputBridge.startGuard();
+    } else {
+      await inputBridge.stopGuard();
+      if (!controllingRemote) inputBridge.startEdgeWatch();
     }
     sendToUI('control', { remote: controllingRemote, beingControlled });
   });
@@ -179,6 +189,7 @@ function setupHubHandlers() {
     sendToUI('control', { remote: true, beingControlled: false });
     clipboardSync.flush();
     inputBridge.stopEdgeWatch();
+    await inputBridge.stopGuard();
     await inputBridge.startCapturing();
   });
 
@@ -194,11 +205,12 @@ function setupHubHandlers() {
 
   hub.on('remote-input', (msg) => {
     if (msg?.t === 'hotkey-release') {
-      hub.releaseControl();
+      forceLocalControl('Peer released');
       return;
     }
-    // Ignore remote input while we are driving them (loop protection)
     if (controllingRemote) return;
+    // Only inject while this machine is marked as being controlled
+    if (!beingControlled) return;
     inputBridge.applyRemote(msg);
   });
 
@@ -211,6 +223,27 @@ function setupHubHandlers() {
     sendToUI('peer', info);
     if (info) setTimeout(() => clipboardSync.flush(), 150);
   });
+}
+
+/** Emergency: stop remote mouse takeover and reclaim this machine. */
+async function forceLocalControl(reason) {
+  inputBridge.blockRemote(20000);
+  await inputBridge.stopCapturing();
+  await inputBridge.stopGuard();
+  if (controllingRemote) {
+    controllingRemote = false;
+    await hub.releaseControl();
+  }
+  if (beingControlled) {
+    beingControlled = false;
+    hub.beingControlled = false;
+    hub.send({ type: 'release' });
+    hub.emit('being-controlled', false);
+  }
+  updateTrayMenu();
+  sendToUI('control', { remote: false, beingControlled: false });
+  sendToUI('log', reason || 'Local control restored');
+  inputBridge.startEdgeWatch();
 }
 
 function listDisplays() {
@@ -286,12 +319,13 @@ app.whenReady().then(async () => {
     getCursor: () => screen.getCursorScreenPoint(),
     onLocalInput: (msg) => {
       if (msg?.t === 'hotkey-release') {
-        hub.releaseControl();
+        forceLocalControl('Hotkey release');
         return;
       }
       hub.sendInput(msg);
     },
     onEdgeLeave: (hit) => hub.tryLeaveViaEdge(hit),
+    onLocalReclaim: () => forceLocalControl('Local mouse reclaimed control'),
     isControllingRemote: () => controllingRemote,
     isBeingControlled: () => beingControlled,
     getPeerScreen: () => hub.getPeerScreen(),
@@ -303,9 +337,10 @@ app.whenReady().then(async () => {
   createTray();
   clipboardSync.start();
 
-  globalShortcut.register('CommandOrControl+Alt+Backspace', () => {
-    hub.releaseControl();
-  });
+  // Panic hotkeys — work even while cursor is being dragged by peer
+  const panic = () => forceLocalControl('Panic hotkey — local control');
+  globalShortcut.register('CommandOrControl+Alt+Backspace', panic);
+  globalShortcut.register('CommandOrControl+Shift+Escape', panic);
 
   ipcMain.handle('get-info', () => {
     const displays = listDisplays();
@@ -362,7 +397,7 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('release-control', async () => {
-    await hub.releaseControl();
+    await forceLocalControl('Released from UI');
     return { ok: true };
   });
 
