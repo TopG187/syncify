@@ -382,14 +382,21 @@ app.whenReady().then(async () => {
       }
       // OS-native fallback (helps macOS pasteboard reliability)
       try {
+        if (!value) return;
         const { execFileSync } = require('child_process');
         if (process.platform === 'darwin') {
           execFileSync('pbcopy', { input: value, encoding: 'utf8' });
         } else if (process.platform === 'win32') {
+          // Avoid Set-Clipboard $input (null/empty breaks PowerShell)
+          const encoded = Buffer.from(value, 'utf16le').toString('base64');
           execFileSync(
             'powershell.exe',
-            ['-NoProfile', '-Command', 'Set-Clipboard -Value $input'],
-            { input: value, encoding: 'utf8', windowsHide: true }
+            [
+              '-NoProfile',
+              '-Command',
+              `$t = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')); Set-Clipboard -Value $t`,
+            ],
+            { windowsHide: true }
           );
         }
       } catch {
