@@ -220,6 +220,7 @@ function setupHubHandlers() {
       }
       await inputBridge.startGuard();
     } else {
+      inputBridge.releaseInjectedModifiers();
       await inputBridge.stopGuard();
       syncEdgeWatch();
     }
@@ -280,6 +281,7 @@ function setupHubHandlers() {
 async function forceLocalControl(reason) {
   if (!inputBridge) return;
   inputBridge.blockRemote(5000);
+  inputBridge.releaseInjectedModifiers();
   await inputBridge.stopCapturing();
   await inputBridge.stopGuard();
   try {
