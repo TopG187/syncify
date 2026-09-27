@@ -12,6 +12,7 @@ let hub = null;
 let clipboardSync = null;
 let inputBridge = null;
 let controllingRemote = false;
+let beingControlled = false;
 let sessionStore = null;
 
 const DEFAULT_PORT = 24892;
@@ -139,33 +140,56 @@ function getLocalAddresses() {
 function setupHubHandlers() {
   hub.on('status', (status) => {
     sendToUI('status', status);
+    if (status.state === 'idle') {
+      inputBridge.stopEdgeWatch();
+      return;
+    }
     if (
       status.state === 'paired' ||
       status.state === 'hosting' ||
       status.state === 'connected' ||
       status.state === 'reconnecting'
     ) {
-      if (!controllingRemote) inputBridge.startEdgeWatch();
+      // Never edge-watch while driving peer OR while peer drives us
+      if (!controllingRemote && !beingControlled) inputBridge.startEdgeWatch();
+      else inputBridge.stopEdgeWatch();
     }
-    if (status.state === 'idle') inputBridge.stopEdgeWatch();
   });
   hub.on('log', (msg) => sendToUI('log', msg));
 
+  hub.on('being-controlled', (on) => {
+    beingControlled = !!on;
+    if (beingControlled) {
+      inputBridge.stopEdgeWatch();
+      // If we somehow were capturing, stop — peer owns the cursor now
+      if (controllingRemote) {
+        controllingRemote = false;
+        inputBridge.stopCapturing();
+      }
+    } else if (!controllingRemote) {
+      inputBridge.startEdgeWatch();
+    }
+    sendToUI('control', { remote: controllingRemote, beingControlled });
+  });
+
   hub.on('control-enter', async () => {
     controllingRemote = true;
+    beingControlled = false;
     updateTrayMenu();
-    sendToUI('control', { remote: true });
+    sendToUI('control', { remote: true, beingControlled: false });
     clipboardSync.flush();
+    inputBridge.stopEdgeWatch();
     await inputBridge.startCapturing();
   });
 
   hub.on('control-leave', async () => {
     controllingRemote = false;
     updateTrayMenu();
-    sendToUI('control', { remote: false });
+    sendToUI('control', { remote: false, beingControlled });
     await inputBridge.stopCapturing();
     await inputBridge.nudgeInward(hub.getLayout());
     clipboardSync.flush();
+    if (!beingControlled) inputBridge.startEdgeWatch();
   });
 
   hub.on('remote-input', (msg) => {
@@ -173,6 +197,8 @@ function setupHubHandlers() {
       hub.releaseControl();
       return;
     }
+    // Ignore remote input while we are driving them (loop protection)
+    if (controllingRemote) return;
     inputBridge.applyRemote(msg);
   });
 
@@ -267,6 +293,7 @@ app.whenReady().then(async () => {
     },
     onEdgeLeave: (hit) => hub.tryLeaveViaEdge(hit),
     isControllingRemote: () => controllingRemote,
+    isBeingControlled: () => beingControlled,
     getPeerScreen: () => hub.getPeerScreen(),
     getLayout: () => hub.getLayout(),
   });
