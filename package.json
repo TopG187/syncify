@@ -1,0 +1,23 @@
+{
+  "name": "syncify",
+  "version": "1.0.0",
+  "description": "Share mouse, keyboard, and clipboard between Mac and PC",
+  "main": "electron/main.js",
+  "author": "Syncify",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w uiohook-napi,@nut-tree-fork/nut-js",
+    "postinstall": "electron-rebuild -f -w uiohook-napi,@nut-tree-fork/nut-js || echo Rebuild skipped — run npm run rebuild after install"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "uiohook-napi": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "electron": "^33.2.0",
+    "electron-rebuild": "^3.2.9"
+  }
+}

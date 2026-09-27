@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Syncify</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="brand">
+      <div class="brand-row">
+        <h1>Syncify</h1>
+        <button type="button" class="theme-btn" id="btnTheme" title="Toggle light / dark" aria-label="Toggle theme">
+          <span id="themeIcon">☀</span>
+        </button>
+      </div>
+      <p class="tag">One mouse &amp; keyboard. Two machines.</p>
+    </header>
+
+    <section class="card status-card" aria-live="polite">
+      <div class="row">
+        <span class="dot" id="dot"></span>
+        <span id="statusText">Idle</span>
+      </div>
+      <p class="meta" id="hostMeta"></p>
+      <p class="meta" id="peerMeta">No peer connected</p>
+      <p class="warn hidden" id="inputWarn"></p>
+    </section>
+
+    <section class="card">
+      <h2>Layout</h2>
+      <p class="hint">Pick the monitor, then which edge leads to the other computer.</p>
+      <p class="hint tight">Example: Mac under your left screen → select <strong>Left</strong> + <strong>↓</strong></p>
+
+      <div id="monitorMap" class="monitor-map" role="group" aria-label="Monitors"></div>
+
+      <div class="layout-grid" role="group" aria-label="Exit edge">
+        <button type="button" class="layout-btn" data-layout="top" title="Peer above">↑</button>
+        <button type="button" class="layout-btn" data-layout="left" title="Peer left">←</button>
+        <button type="button" class="layout-btn" data-layout="right" title="Peer right">→</button>
+        <button type="button" class="layout-btn active" data-layout="bottom" title="Peer below">↓</button>
+      </div>
+      <p class="layout-summary" id="layoutSummary">Exit via bottom of Left</p>
+    </section>
+
+    <section class="card">
+      <h2>Connect</h2>
+      <div class="tabs">
+        <button type="button" class="tab active" data-tab="host">Host</button>
+        <button type="button" class="tab" data-tab="join">Join</button>
+      </div>
+
+      <div id="panel-host" class="panel">
+        <label>
+          Port
+          <input id="hostPort" type="number" value="24892" min="1024" max="65535" />
+        </label>
+        <p class="hint" id="ipList">Your IPs will show here</p>
+        <button type="button" class="primary" id="btnHost">Start hosting</button>
+      </div>
+
+      <div id="panel-join" class="panel hidden">
+        <label>
+          Host IP
+          <input id="joinHost" type="text" placeholder="192.168.1.20" autocomplete="off" />
+        </label>
+        <label>
+          Port
+          <input id="joinPort" type="number" value="24892" min="1024" max="65535" />
+        </label>
+        <button type="button" class="primary" id="btnJoin">Connect</button>
+      </div>
+
+      <button type="button" class="ghost hidden" id="btnDisconnect">Disconnect</button>
+      <button type="button" class="ghost hidden" id="btnRelease">Return control (Ctrl+Alt+Backspace)</button>
+    </section>
+
+    <section class="card log-card">
+      <h2>Activity</h2>
+      <ul id="log" class="log"></ul>
+    </section>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>
