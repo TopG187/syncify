@@ -5,6 +5,7 @@ const { PeerHub } = require('../lib/peer-hub');
 const { ClipboardSync } = require('../lib/clipboard-sync');
 const { InputBridge } = require('../lib/input-bridge');
 const { SessionStore } = require('../lib/session-store');
+const { SettingsStore } = require('../lib/settings-store');
 
 let mainWindow = null;
 let tray = null;
@@ -14,10 +15,34 @@ let inputBridge = null;
 let controllingRemote = false;
 let beingControlled = false;
 let sessionStore = null;
-/** TEMP: mouse/keyboard sharing disabled — was causing cursor feedback loops on both machines */
-let mouseShareEnabled = false;
+let settingsStore = null;
+let mouseShareEnabled = true;
 
 const DEFAULT_PORT = 24892;
+
+function syncEdgeWatch() {
+  if (!inputBridge) return;
+  if (mouseShareEnabled && !controllingRemote && !beingControlled && hub?.wantedActive) {
+    inputBridge.startEdgeWatch();
+  } else {
+    inputBridge.stopEdgeWatch();
+  }
+}
+
+async function setMouseShareEnabled(on) {
+  mouseShareEnabled = !!on;
+  settingsStore?.set({ mouseShareEnabled });
+  if (!mouseShareEnabled) {
+    await forceLocalControl('Mouse sync turned off');
+  } else {
+    inputBridge?.blockRemote(0);
+    syncEdgeWatch();
+    sendToUI('log', 'Mouse sync on — drag off the layout edge to control the other machine');
+  }
+  sendToUI('settings', { mouseShareEnabled });
+  updateTrayMenu();
+  return mouseShareEnabled;
+}
 
 function appIcon() {
   const ico = path.join(__dirname, '..', 'assets', 'icon.ico');
@@ -109,6 +134,10 @@ function updateTrayMenu() {
         },
       },
       {
+        label: mouseShareEnabled ? 'Mouse sync: On' : 'Mouse sync: Off',
+        click: () => setMouseShareEnabled(!mouseShareEnabled),
+      },
+      {
         label: 'Stop remote mouse (fix me)',
         click: () => forceLocalControl('Stopped from tray'),
       },
@@ -161,21 +190,20 @@ function setupHubHandlers() {
       status.state === 'connected' ||
       status.state === 'reconnecting'
     ) {
-      if (mouseShareEnabled && !controllingRemote && !beingControlled) {
-        inputBridge.startEdgeWatch();
-      } else {
-        inputBridge.stopEdgeWatch();
-      }
+      syncEdgeWatch();
     }
   });
   hub.on('log', (msg) => sendToUI('log', msg));
 
   hub.on('being-controlled', async (on) => {
     if (!mouseShareEnabled) {
-      // Reject takeover while mouse share is off
       beingControlled = false;
       hub.beingControlled = false;
-      hub.send({ type: 'release' });
+      try {
+        hub.send({ type: 'release' });
+      } catch {
+        /* ignore */
+      }
       await inputBridge.stopGuard();
       inputBridge.stopEdgeWatch();
       return;
@@ -191,14 +219,14 @@ function setupHubHandlers() {
       await inputBridge.startGuard();
     } else {
       await inputBridge.stopGuard();
-      if (!controllingRemote && mouseShareEnabled) inputBridge.startEdgeWatch();
+      syncEdgeWatch();
     }
     sendToUI('control', { remote: controllingRemote, beingControlled });
   });
 
   hub.on('control-enter', async () => {
     if (!mouseShareEnabled) {
-      await forceLocalControl('Mouse share is disabled');
+      await forceLocalControl('Mouse sync is off');
       return;
     }
     controllingRemote = true;
@@ -218,7 +246,7 @@ function setupHubHandlers() {
     await inputBridge.stopCapturing();
     await inputBridge.nudgeInward(hub.getLayout());
     clipboardSync.flush();
-    if (mouseShareEnabled && !beingControlled) inputBridge.startEdgeWatch();
+    syncEdgeWatch();
   });
 
   hub.on('remote-input', (msg) => {
@@ -245,24 +273,32 @@ function setupHubHandlers() {
 
 /** Emergency: stop remote mouse takeover and reclaim this machine. */
 async function forceLocalControl(reason) {
-  inputBridge.blockRemote(20000);
+  if (!inputBridge) return;
+  inputBridge.blockRemote(5000);
   await inputBridge.stopCapturing();
   await inputBridge.stopGuard();
   if (controllingRemote) {
     controllingRemote = false;
-    await hub.releaseControl();
+    try {
+      await hub.releaseControl();
+    } catch {
+      /* ignore */
+    }
   }
   if (beingControlled) {
     beingControlled = false;
     hub.beingControlled = false;
-    hub.send({ type: 'release' });
-    hub.emit('being-controlled', false);
+    try {
+      hub.send({ type: 'release' });
+    } catch {
+      /* ignore */
+    }
+    // Avoid re-entrancy storms — update UI directly
   }
   updateTrayMenu();
   sendToUI('control', { remote: false, beingControlled: false });
-  sendToUI('log', reason || 'Local control restored');
-  if (mouseShareEnabled) inputBridge.startEdgeWatch();
-  else inputBridge.stopEdgeWatch();
+  if (reason) sendToUI('log', reason);
+  syncEdgeWatch();
 }
 
 function listDisplays() {
@@ -296,6 +332,10 @@ app.whenReady().then(async () => {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
   sessionStore = new SessionStore(path.join(app.getPath('userData'), 'session.json'));
+  settingsStore = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'));
+  const settings = settingsStore.load();
+  mouseShareEnabled = settings.mouseShareEnabled !== false;
+
   hub = new PeerHub({ defaultPort: DEFAULT_PORT, sessionStore });
   clipboardSync = new ClipboardSync({
     getText: () => {
@@ -321,7 +361,6 @@ app.whenReady().then(async () => {
       } catch {
         clipboard.writeText(value);
       }
-      // Also write via write() for better macOS pasteboard compatibility
       try {
         clipboard.write({ text: value });
       } catch {
@@ -341,6 +380,7 @@ app.whenReady().then(async () => {
         forceLocalControl('Hotkey release');
         return;
       }
+      if (!mouseShareEnabled) return;
       hub.sendInput(msg);
     },
     onEdgeLeave: (hit) => {
@@ -359,10 +399,12 @@ app.whenReady().then(async () => {
   createTray();
   clipboardSync.start();
 
-  // Mouse share off by default — kill any leftover capture immediately
-  forceLocalControl('Mouse share disabled (clipboard still works)');
+  // Clear any stuck capture from a previous crash
+  await inputBridge.stopCapturing();
+  await inputBridge.stopGuard();
+  controllingRemote = false;
+  beingControlled = false;
 
-  // Panic hotkeys — work even while cursor is being dragged by peer
   const panic = () => forceLocalControl('Panic hotkey — local control');
   globalShortcut.register('CommandOrControl+Alt+Backspace', panic);
   globalShortcut.register('CommandOrControl+Shift+Escape', panic);
@@ -384,6 +426,11 @@ app.whenReady().then(async () => {
       inputError: inputBridge.loadError ? String(inputBridge.loadError.message || inputBridge.loadError) : null,
       mouseShareEnabled,
     };
+  });
+
+  ipcMain.handle('set-mouse-share', async (_e, enabled) => {
+    const value = await setMouseShareEnabled(!!enabled);
+    return { ok: true, mouseShareEnabled: value };
   });
 
   ipcMain.handle('host', async (_e, { port, layout }) => {
@@ -409,10 +456,7 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('disconnect', async () => {
-    await inputBridge.stopCapturing();
-    inputBridge.stopEdgeWatch();
-    controllingRemote = false;
-    updateTrayMenu();
+    await forceLocalControl('Disconnected');
     await hub.disconnect();
     return { ok: true };
   });
@@ -427,7 +471,6 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
-  // Resume last link after launch (sleep / reboot / quit)
   setTimeout(() => {
     hub.restoreSession().catch((err) => console.error('restoreSession', err));
   }, 600);
@@ -439,6 +482,7 @@ app.on('before-quit', async () => {
   clipboardSync?.stop();
   inputBridge?.stopEdgeWatch();
   await inputBridge?.stopCapturing();
+  await inputBridge?.stopGuard();
   // Keep session file so next start auto-reconnects
   await hub?.shutdown();
 });

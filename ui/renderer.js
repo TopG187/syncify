@@ -170,6 +170,19 @@
 
   $('btnRelease').addEventListener('click', () => window.syncify.releaseControl());
 
+  $('mouseShareToggle').addEventListener('change', async () => {
+    const on = $('mouseShareToggle').checked;
+    const res = await window.syncify.setMouseShare(on);
+    $('mouseShareToggle').checked = !!(res && res.mouseShareEnabled);
+    addLog(res.mouseShareEnabled ? 'Mouse sync enabled' : 'Mouse sync disabled');
+  });
+
+  window.syncify.onSettings((s) => {
+    if (typeof s.mouseShareEnabled === 'boolean') {
+      $('mouseShareToggle').checked = s.mouseShareEnabled;
+    }
+  });
+
   window.syncify.onStatus((s) => {
     if (s.state === 'hosting') {
       setStatus(s.waiting ? `Hosting — waiting for peer` : `Hosting on ${s.port || '…'}`, 'host');
@@ -252,6 +265,8 @@
       $('inputWarn').textContent =
         'Input modules not ready. Run: npm install && npm run rebuild — then restart. Clipboard sync still works.';
     }
+    $('mouseShareToggle').checked = info.mouseShareEnabled !== false;
+    addLog(info.mouseShareEnabled !== false ? 'Mouse sync on' : 'Mouse sync off');
     addLog('Ready');
   })();
 

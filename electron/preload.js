@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('syncify', {
   disconnect: () => ipcRenderer.invoke('disconnect'),
   setLayout: (layout) => ipcRenderer.invoke('set-layout', layout),
   releaseControl: () => ipcRenderer.invoke('release-control'),
+  setMouseShare: (enabled) => ipcRenderer.invoke('set-mouse-share', enabled),
   onStatus: (cb) => {
     const handler = (_e, data) => cb(data);
     ipcRenderer.on('status', handler);
@@ -26,5 +27,10 @@ contextBridge.exposeInMainWorld('syncify', {
     const handler = (_e, data) => cb(data);
     ipcRenderer.on('control', handler);
     return () => ipcRenderer.removeListener('control', handler);
+  },
+  onSettings: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('settings', handler);
+    return () => ipcRenderer.removeListener('settings', handler);
   },
 });

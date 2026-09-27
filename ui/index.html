@@ -31,8 +31,18 @@
       </div>
       <p class="meta" id="hostMeta"></p>
       <p class="meta" id="peerMeta">No peer connected</p>
-      <p class="warn" id="mouseShareWarn">Mouse sharing is temporarily off (was unstable). Clipboard sync still works. Connection + auto-reconnect are unchanged.</p>
       <p class="warn hidden" id="inputWarn"></p>
+    </section>
+
+    <section class="card">
+      <h2>Settings</h2>
+      <label class="toggle-row" for="mouseShareToggle">
+        <span>
+          <strong>Mouse &amp; keyboard sync</strong>
+          <span class="toggle-hint">Drag off the layout edge to control the other machine. Ctrl+Alt+Backspace stops it.</span>
+        </span>
+        <input type="checkbox" id="mouseShareToggle" checked />
+      </label>
     </section>
 
     <section class="card">
